@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.song.tinderbox.scan</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/song/tinderbox/parser/venv/bin/python3.14</string>
+        <string>-m</string>
+        <string>tinderbox.cli</string>
+        <string>scan-inbox</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>TINDERBOX_ENV_FILE</key>
+        <string>/Users/song/.secrets/shared.env</string>
+        <key>PYTHONPATH</key>
+        <string>/Users/song/tinderbox/parser</string>
+    </dict>
+    <key>WorkingDirectory</key>
+    <string>/Users/song/tinderbox/parser</string>
+    <key>StartInterval</key>
+    <integer>900</integer>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>StandardOutPath</key>
+    <string>/Users/song/tinderbox/logs/scan.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/song/tinderbox/logs/scan.stderr.log</string>
+</dict>
+</plist>

@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.__USER__.tinderbox.qa</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__HOME__/tinderbox/parser/venv/bin/python3.14</string>
+        <string>-m</string>
+        <string>tinderbox.cli</string>
+        <string>qa</string>
+        <string>run</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>TINDERBOX_ENV_FILE</key>
+        <string>__HOME__/.secrets/shared.env</string>
+        <key>PYTHONPATH</key>
+        <string>__HOME__/tinderbox/parser</string>
+    </dict>
+    <key>WorkingDirectory</key>
+    <string>__HOME__/tinderbox/parser</string>
+    <!-- Weekly: every Sunday at 03:00 local time -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>0</integer>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>StandardOutPath</key>
+    <string>__HOME__/tinderbox/logs/qa.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/tinderbox/logs/qa.stderr.log</string>
+</dict>
+</plist>

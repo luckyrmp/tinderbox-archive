@@ -1,0 +1,23 @@
+[project]
+name = "tinderbox"
+version = "0.1.0"
+description = "Personal claude.ai conversation archive — parser and ingest worker"
+requires-python = ">=3.12"
+dependencies = [
+    "supabase>=2.0.0",
+    "python-dotenv>=1.0.0",
+    "click>=8.0.0",
+    "httpx>=0.24.0",
+    "pydantic>=2.0.0",
+]
+
+[project.scripts]
+tinderbox = "tinderbox.cli:main"
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["tinderbox*"]

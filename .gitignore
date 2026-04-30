@@ -1,0 +1,54 @@
+# =============================================================================
+# Tinderbox .gitignore
+# =============================================================================
+# Everything in this file is data, secrets, or build artifact — never code.
+# Note: gitignore does NOT support inline comments. Each rule must be alone
+# on its line; comments must start at column 0.
+
+# --- Runtime data (contains your actual archive content; NEVER commit) ------
+archive/
+inbox/
+work/
+exports/
+blobs/
+logs/
+state/
+
+# --- Eval artifacts (QA reports leak topical content from your archive) -----
+eval/
+
+# --- Discovery scratch ------------------------------------------------------
+discovery/
+
+# --- Python -----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+parser/venv/
+parser/.venv/
+parser/build/
+parser/dist/
+parser/*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Editor / OS ------------------------------------------------------------
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+
+# --- Secrets (defense in depth) ---------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# --- launchd backup dumps ---------------------------------------------------
+*.bak
+*.pre-tinderbox.bak
