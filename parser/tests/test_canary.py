@@ -141,6 +141,57 @@ class CanaryThresholdTest(unittest.TestCase):
         self.assertEqual(threshold, 0)
 
 
+class ApplyTombstonesInvariantTest(unittest.TestCase):
+    """apply_tombstones must refuse to run when conversations_ingested == 0.
+
+    This guards against the incident where a raw invocation with conversations_ingested=0
+    would tombstone every conversation in the archive.
+    """
+
+    def test_refuses_when_zero_conversations_ingested(self):
+        """Calling apply_tombstones with conversations_ingested=0 must raise ValueError."""
+        with self.assertRaises(ValueError) as ctx:
+            apply_tombstones("any-run-id", conversations_ingested=0)
+        self.assertIn("conversations_ingested=0", str(ctx.exception))
+
+    def test_refuses_when_negative(self):
+        with self.assertRaises(ValueError):
+            apply_tombstones("any-run-id", conversations_ingested=-1)
+
+    def test_proceeds_when_at_least_one_conversation(self):
+        """When conversations_ingested >= 1, the invariant passes and DB is called."""
+        mock_result = MagicMock()
+        mock_result.count = 0
+
+        pre_count_chain = MagicMock()
+        pre_count_chain.select.return_value.eq.return_value.execute.return_value = mock_result
+
+        update_result = MagicMock()
+        update_result.data = []
+        update_chain = MagicMock()
+        update_chain.update.return_value.eq.return_value.lt.return_value.execute.return_value = update_result
+
+        run_chain = MagicMock()
+        run_chain.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(
+            data=[{"started_at": "2026-04-29T00:00:00Z"}]
+        )
+
+        calls = []
+
+        def table_dispatcher(name):
+            calls.append(name)
+            if name == "ingest_runs":
+                return run_chain
+            conv_calls = [c for c in calls if c == "conversations"]
+            if len(conv_calls) == 1:
+                return pre_count_chain
+            return update_chain
+
+        with patch("tinderbox.ingest.sweep.db.table", side_effect=table_dispatcher):
+            n = apply_tombstones("run-id", conversations_ingested=1)
+        self.assertEqual(n, 0)
+
+
 class CanaryErrorShapeTest(unittest.TestCase):
     """canary_error returns a structured IngestError with the right item_ref."""
 

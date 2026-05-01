@@ -53,13 +53,40 @@ def check_canary(run_id: str, config: Config) -> tuple[bool, int, int, float]:
     return tripped, would_count, active_count, threshold
 
 
-def apply_tombstones(run_id: str) -> int:
+def apply_tombstones(run_id: str, conversations_ingested: int) -> int:
     """Apply tombstone flags to conversations not seen in this run.
 
-    Returns count of tombstoned conversations.
+    `conversations_ingested` must be the number of conversations the caller
+    actually processed from a real ZIP in this run.  Callers MUST pass a
+    positive value; passing 0 is a hard error — a run that ingested nothing
+    has no business marking anything as deleted.
+
+    Returns count of tombstoned conversations. Logs at WARNING when the count is
+    large (>=50 or >=50% of active conversations) so that a future bulk-tombstone
+    incident is loud in the parser.log even if it slipped past the canary
+    (e.g. via canary_override or a misuse of this function from outside the
+    runner).
     """
+    if conversations_ingested < 1:
+        raise ValueError(
+            f"apply_tombstones called for run {run_id} with conversations_ingested="
+            f"{conversations_ingested}. Refusing to tombstone: a run that processed "
+            "no conversations from a real ZIP must not mark anything as deleted."
+        )
+    import logging
+    sweep_logger = logging.getLogger("tinderbox.ingest.sweep")
+
     run_start = _run_started_at(run_id)
     now_iso = datetime.now(timezone.utc).isoformat()
+
+    # Pre-count for the warning threshold check.
+    pre_count = (
+        db.table("conversations")
+        .select("id", count="exact")
+        .eq("deleted_upstream", False)
+        .execute()
+    )
+    active_before = pre_count.count or 0
 
     result = (
         db.table("conversations")
@@ -68,8 +95,19 @@ def apply_tombstones(run_id: str) -> int:
         .lt("last_seen_in_export_at", run_start)
         .execute()
     )
+    n = len(result.data) if result.data else 0
 
-    return len(result.data) if result.data else 0
+    if n >= 50 or (active_before > 0 and n / active_before >= 0.5):
+        sweep_logger.warning(
+            "BULK TOMBSTONE APPLIED: run_id=%s tombstoned=%d / active_before=%d (%.1f%%). "
+            "If this was unintended, conversations are recoverable via "
+            "UPDATE tinderbox.conversations SET deleted_upstream=false, deleted_upstream_at=null "
+            "WHERE deleted_upstream_at >= '%s'.",
+            run_id, n, active_before,
+            (100.0 * n / active_before) if active_before else 0.0,
+            now_iso,
+        )
+    return n
 
 
 def canary_error(would_count: int, active_count: int, threshold: float) -> IngestError:

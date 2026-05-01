@@ -109,24 +109,31 @@ def run(zip_path: str, config: Config, canary_override: bool = False,
             if counters.conversations_seen % 100 == 0:
                 logger.info("Progress: %d conversations processed", counters.conversations_seen)
 
-        # Step 8: tombstone sweep
-        if not canary_override:
-            tripped, would_count, active_count, threshold = check_canary(run_id, config)
-            if tripped:
-                err = canary_error(would_count, active_count, threshold)
-                errors.append(err.to_dict())
-                logger.warning("Mass-tombstone canary tripped: %d of %d (threshold %.0f)",
-                               would_count, active_count, threshold)
-                _finalize_run(run_id, "failed", counters, errors, skipped,
-                              override_run_id=override_run_id)
-                return run_id
+        # Step 8: tombstone sweep.
+        # Invariant: sweep only runs when this run actually ingested ≥1 conversation
+        # from a real ZIP.  apply_tombstones enforces this as a hard error so that
+        # direct callers (tests, REPL, future scripts) cannot bypass it accidentally.
+        if counters.conversations_seen == 0:
+            logger.info("No conversations processed — skipping tombstone sweep.")
         else:
-            logger.info("Canary override active — skipping canary check")
+            if not canary_override:
+                # Canary check MUST precede the UPDATE — apply_tombstones never runs
+                # unless we reach the line below.
+                tripped, would_count, active_count, threshold = check_canary(run_id, config)
+                if tripped:
+                    err = canary_error(would_count, active_count, threshold)
+                    errors.append(err.to_dict())
+                    logger.warning("Mass-tombstone canary tripped: %d of %d (threshold %.0f)",
+                                   would_count, active_count, threshold)
+                    _finalize_run(run_id, "failed", counters, errors, skipped,
+                                  override_run_id=override_run_id)
+                    return run_id
+            else:
+                logger.info("Canary override active — skipping canary check")
 
-        # Apply tombstones
-        tombstoned = apply_tombstones(run_id)
-        if tombstoned:
-            logger.info("Tombstoned %d conversations", tombstoned)
+            tombstoned = apply_tombstones(run_id, conversations_ingested=counters.conversations_seen)
+            if tombstoned:
+                logger.info("Tombstoned %d conversations", tombstoned)
 
     except Exception as e:
         err = IngestError(
@@ -153,6 +160,16 @@ def run(zip_path: str, config: Config, canary_override: bool = False,
     status = "completed" if not errors else "partial"
     _finalize_run(run_id, status, counters, errors, skipped,
                   canary_override=canary_override, override_run_id=override_run_id)
+
+    # Invalidate cached search/conversation responses — new content has landed.
+    # Best-effort: failure here doesn't fail the run.
+    if counters.conversations_new > 0 or counters.messages_new > 0 or counters.artifacts_new > 0:
+        try:
+            from tinderbox import cache
+            n = cache.invalidate_searches()
+            logger.info("Invalidated %d cached search entries due to new content", n)
+        except Exception as e:
+            logger.warning("Cache invalidation failed (non-fatal): %s", e)
 
     logger.info(
         "Run complete: status=%s convos=%d/%d msgs=%d artifacts=%d attachments=%d errors=%d",
