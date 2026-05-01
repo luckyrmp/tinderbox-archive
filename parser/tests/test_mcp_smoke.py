@@ -5,14 +5,14 @@ Run: PYTHONPATH=. python3.14 tests/test_mcp_smoke.py
 """
 
 import json
+import os
 import subprocess
 import sys
 import time
 from pathlib import Path
 
 
-SERVER = ["/Users/song/tinderbox/parser/venv/bin/python3.14",
-          "-m", "tinderbox.mcp.server"]
+SERVER = [sys.executable, "-m", "tinderbox.mcp.server"]
 
 
 def _send(proc, msg):
@@ -30,17 +30,20 @@ def _recv(proc, timeout=15):
 
 
 def main():
+    repo_root = str(Path(__file__).resolve().parent.parent)
     env_extras = {
-        "PYTHONPATH": "/Users/song/tinderbox/parser",
-        "TINDERBOX_ENV_FILE": "/Users/song/.secrets/shared.env",
+        "PYTHONPATH": repo_root,
+        "TINDERBOX_ENV_FILE": os.environ.get(
+            "TINDERBOX_ENV_FILE",
+            str(Path.home() / ".secrets" / "tinderbox.env"),
+        ),
     }
-    import os
     env = {**os.environ, **env_extras}
 
     print("Spawning MCP server...")
     proc = subprocess.Popen(
         SERVER,
-        cwd="/Users/song/tinderbox/parser",
+        cwd=repo_root,
         env=env,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,

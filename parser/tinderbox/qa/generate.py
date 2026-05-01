@@ -16,6 +16,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 import anthropic
 from dotenv import load_dotenv
@@ -125,7 +126,7 @@ def generate_eval_set(config: Config, target_total: int = 50,
 
     Returns counters: {sampled, already_covered, queries_inserted, samples_skipped}.
     """
-    load_dotenv("/Users/song/.secrets/shared.env")
+    load_dotenv(os.environ.get("TINDERBOX_ENV_FILE", str(Path.home() / ".secrets" / "tinderbox.env")))
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         raise RuntimeError("ANTHROPIC_API_KEY not set")
