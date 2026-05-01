@@ -60,6 +60,34 @@ SEARCH_INPUT_SCHEMA = {
 }
 
 
+def _fetch_enrichment_summaries(conv_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """Fetch latest enrichment summary for each conversation in one batched query.
+
+    Returns {conversation_id: {summary, project_tags}}. Missing conversations
+    map to None. Best-effort — failures return {}.
+    """
+    if not conv_ids:
+        return {}
+    try:
+        # Pull all enrichment rows for these conversations; we'll pick the latest
+        # per conv in Python (postgrest doesn't support DISTINCT ON).
+        resp = (
+            db.table("enrichment")
+            .select("conversation_id,summary,project_tags,enriched_at")
+            .in_("conversation_id", list(set(conv_ids)))
+            .order("enriched_at", desc=True)
+            .execute()
+        )
+        latest: dict[str, dict[str, Any]] = {}
+        for row in (resp.data or []):
+            cid = row["conversation_id"]
+            if cid not in latest:
+                latest[cid] = row
+        return latest
+    except Exception:
+        return {}
+
+
 def make_search_handler(config):
     from tinderbox.search.hybrid import hybrid_search
     from tinderbox.search.logging import log_query
@@ -82,6 +110,10 @@ def make_search_handler(config):
         if not results:
             return [text_block(f"No results for: {query!r}")]
 
+        # Batch-fetch enrichment summaries for the conversations in this result set.
+        conv_ids = [r.get("conversation_id") for r in results if r.get("conversation_id")]
+        enrichment_by_conv = _fetch_enrichment_summaries(conv_ids)
+
         lines = [f"Found {len(results)} results for: {query!r}", ""]
         for i, r in enumerate(results, 1):
             title = r.get("conversation_title") or "(untitled)"
@@ -96,11 +128,17 @@ def make_search_handler(config):
             elif r.get("source_type") == "artifact" and r.get("artifact_title"):
                 ref += f"#artifact:{r['artifact_title']}"
 
-            lines.append(
+            block = (
                 f"[{i}] score={score:.3f} (cos={cos:.3f}, fts={fts:.3f})  {ref}\n"
-                f"    Conv: {title}\n"
-                f"    \"{snippet}\""
+                f"    Conv: {title}"
             )
+            enr = enrichment_by_conv.get(r.get("conversation_id"))
+            if enr and enr.get("summary"):
+                tags = enr.get("project_tags") or []
+                tags_str = f" [{', '.join(tags)}]" if tags else ""
+                block += f"\n    Summary{tags_str}: {enr['summary']}"
+            block += f"\n    \"{snippet}\""
+            lines.append(block)
 
         return [text_block("\n".join(lines))]
 
@@ -129,7 +167,79 @@ GET_INPUT_SCHEMA = {
 }
 
 
+def _fetch_conversation_payload(export_id: str, max_messages: int) -> dict[str, Any]:
+    """Resolve export_id (full or prefix) and pull the conversation + capped messages.
+
+    Pure DB fetch — returned dict is JSON-safe so the cache can serialize it.
+    Returns either {'kind': 'ok', 'conv': {...}, 'messages': [...]} or
+    {'kind': 'error', 'message': '...'} for the caller to render.
+    """
+    if len(export_id) < 36:
+        convs = (
+            db.table("conversations")
+            .select("id,export_id,title,created_at_source,updated_at_source,project_name")
+            .like("export_id", f"{export_id}%")
+            .limit(2)
+            .execute()
+        )
+        if not convs.data:
+            return {"kind": "error", "message": f"No conversation matches prefix {export_id!r}."}
+        if len(convs.data) > 1:
+            ids = ", ".join(c["export_id"][:12] for c in convs.data)
+            return {
+                "kind": "error",
+                "message": f"Prefix {export_id!r} matches multiple conversations: {ids}. Provide more digits.",
+            }
+        conv = convs.data[0]
+    else:
+        convs = (
+            db.table("conversations")
+            .select("id,export_id,title,created_at_source,updated_at_source,project_name")
+            .eq("export_id", export_id)
+            .limit(1)
+            .execute()
+        )
+        if not convs.data:
+            return {"kind": "error", "message": f"No conversation with export_id {export_id!r}."}
+        conv = convs.data[0]
+
+    msgs_resp = (
+        db.table("messages")
+        .select("position,role,content,created_at_source")
+        .eq("conversation_id", conv["id"])
+        .order("position")
+        .limit(max_messages)
+        .execute()
+    )
+
+    # Latest enrichment for this conversation (if any). Best-effort.
+    enrichment = None
+    try:
+        enr_resp = (
+            db.table("enrichment")
+            .select("summary,project_tags,client_tags,topics,key_decisions,enriched_at,enrichment_model")
+            .eq("conversation_id", conv["id"])
+            .order("enriched_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if enr_resp.data:
+            enrichment = enr_resp.data[0]
+    except Exception:
+        # Enrichment lookup is non-fatal — render the conversation without it.
+        pass
+
+    return {
+        "kind": "ok",
+        "conv": conv,
+        "messages": msgs_resp.data or [],
+        "enrichment": enrichment,
+    }
+
+
 def make_get_handler(config):
+    from tinderbox import cache
+
     def handler(args: dict[str, Any]) -> list[dict[str, Any]]:
         export_id = (args.get("export_id") or "").strip()
         if not export_id:
@@ -137,42 +247,18 @@ def make_get_handler(config):
         max_messages = int(args.get("max_messages") or 50)
         max_messages = max(1, min(500, max_messages))
 
-        # Allow a prefix match (we may show only the first 8 chars in search results).
-        if len(export_id) < 36:
-            convs = (
-                db.table("conversations")
-                .select("id,export_id,title,created_at_source,updated_at_source,project_name")
-                .like("export_id", f"{export_id}%")
-                .limit(2)
-                .execute()
-            )
-            if not convs.data:
-                return [text_block(f"No conversation matches prefix {export_id!r}.")]
-            if len(convs.data) > 1:
-                ids = ", ".join(c["export_id"][:12] for c in convs.data)
-                return [text_block(f"Prefix {export_id!r} matches multiple conversations: {ids}. Provide more digits.")]
-            conv = convs.data[0]
-        else:
-            convs = (
-                db.table("conversations")
-                .select("id,export_id,title,created_at_source,updated_at_source,project_name")
-                .eq("export_id", export_id)
-                .limit(1)
-                .execute()
-            )
-            if not convs.data:
-                return [text_block(f"No conversation with export_id {export_id!r}.")]
-            conv = convs.data[0]
-
-        msgs_resp = (
-            db.table("messages")
-            .select("position,role,content,created_at_source")
-            .eq("conversation_id", conv["id"])
-            .order("position")
-            .limit(max_messages)
-            .execute()
+        key = cache.conv_key(export_id, max_messages)
+        payload = cache.get_cache().get_cached(
+            key,
+            lambda: _fetch_conversation_payload(export_id, max_messages),
         )
-        msgs = msgs_resp.data or []
+
+        if payload.get("kind") == "error":
+            return [text_block(payload["message"])]
+
+        conv = payload["conv"]
+        msgs = payload["messages"]
+        enrichment = payload.get("enrichment")
 
         header = [
             f"# {conv.get('title') or '(untitled)'}",
@@ -185,6 +271,28 @@ def make_get_handler(config):
         if conv.get("updated_at_source"):
             header.append(f"updated: {conv['updated_at_source']}")
         header.append(f"messages_returned: {len(msgs)}")
+
+        # Render enrichment as a clearly-marked annotation block.
+        # Per design principle #3, enrichment is OPINION not fact — surface that.
+        if enrichment:
+            header.append("")
+            header.append("--- Enrichment (Haiku-generated annotations — opinion, not source of truth) ---")
+            if enrichment.get("summary"):
+                header.append(f"Summary: {enrichment['summary']}")
+            if enrichment.get("project_tags"):
+                header.append(f"Project tags: {', '.join(enrichment['project_tags'])}")
+            if enrichment.get("client_tags"):
+                header.append(f"Client tags: {', '.join(enrichment['client_tags'])}")
+            if enrichment.get("topics"):
+                header.append(f"Topics: {', '.join(enrichment['topics'])}")
+            decisions = enrichment.get("key_decisions") or []
+            if decisions:
+                header.append(f"Key decisions ({len(decisions)}):")
+                for d in decisions:
+                    if isinstance(d, dict) and d.get("decision"):
+                        header.append(f"  - {d['decision']}")
+            header.append(f"(enriched by {enrichment.get('enrichment_model','?')} at {enrichment.get('enriched_at','?')})")
+            header.append("--- End enrichment ---")
 
         body_lines = []
         for m in msgs:

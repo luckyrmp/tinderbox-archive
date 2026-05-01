@@ -130,6 +130,88 @@ def search(query: str, limit: int, caller: str, log: bool):
             click.echo(f"    \"{snippet}\"")
 
 
+@cli.command()
+@click.option("--limit", type=int, default=None,
+              help="Cap number of conversations enriched (smoke testing).")
+@click.option("--conv-id", "conv_ids", multiple=True,
+              help="Enrich only these conversation IDs (repeatable). Bypasses limit.")
+@click.option("--reenrich", is_flag=True,
+              help="Re-enrich even if a row already exists for this model+version.")
+@click.option("--retry-failures", is_flag=True,
+              help="Re-attempt only conversations with a failure_reason row (skips already-enriched).")
+@click.option("--sleep-ms", type=int, default=0,
+              help="Sleep between Haiku calls (rate-limit safety).")
+@click.option("--max-tokens", type=int, default=3000,
+              help="Haiku max_tokens budget per call (default 3000). Bump to 5000+ for retries on truncated outputs.")
+def enrich(limit: int | None, conv_ids: tuple[str, ...], reenrich: bool, retry_failures: bool,
+           sleep_ms: int, max_tokens: int):
+    """Enrich conversations via Haiku — summary, tags, key decisions, named instances."""
+    config = load_config()
+    _setup_logging(config)
+    db.init(config)
+
+    from tinderbox.enrichment.worker import run_enrichment
+
+    counters = run_enrichment(
+        config,
+        limit=limit,
+        only_conv_ids=list(conv_ids) if conv_ids else None,
+        reenrich=reenrich,
+        retry_failures=retry_failures,
+        sleep_between_ms=sleep_ms,
+        max_tokens=max_tokens,
+    )
+
+    click.echo(
+        f"\nEnrichment pass: enriched={counters.enriched} "
+        f"skipped_already={counters.skipped_already} "
+        f"skipped_empty={counters.skipped_empty} "
+        f"errors={counters.errors} "
+        f"failure_rows={counters.failure_rows_written} "
+        f"truncated={counters.truncated_for_prompt} "
+        f"named_instance_links={counters.named_instance_links}"
+    )
+
+    if counters.error_details:
+        click.echo("\nFirst few errors:")
+        for err in counters.error_details[:5]:
+            click.echo(f"  {err['export_id']}: {err['error_class']}: {err['message'][:200]}")
+
+
+@cli.command("named-clean")
+@click.option("--remove", "remove_names", multiple=True,
+              help="Names to delete from named_instances (and their join rows). Repeatable.")
+@click.option("--dry-run", is_flag=True, help="Show what would be removed; don't change anything.")
+def named_clean(remove_names: tuple[str, ...], dry_run: bool):
+    """Remove false-positive named_instances by name (case-sensitive)."""
+    config = load_config()
+    _setup_logging(config)
+    db.init(config)
+
+    if not remove_names:
+        click.echo("No --remove names given. Pass one or more --remove NAME.")
+        return
+
+    for name in remove_names:
+        ni = db.table("named_instances").select("id").eq("name", name).limit(1).execute()
+        if not ni.data:
+            click.echo(f"  {name}: not found")
+            continue
+        ni_id = ni.data[0]["id"]
+
+        link_count = db.table("conversation_named_instances")\
+            .select("conversation_id", count="exact").eq("named_instance_id", ni_id).execute()
+        n_links = link_count.count or 0
+
+        if dry_run:
+            click.echo(f"  {name}: would delete 1 named_instance + {n_links} link(s)")
+            continue
+
+        db.table("conversation_named_instances").delete().eq("named_instance_id", ni_id).execute()
+        db.table("named_instances").delete().eq("id", ni_id).execute()
+        click.echo(f"  {name}: deleted (1 named_instance + {n_links} links)")
+
+
 @cli.command("scan-inbox")
 def scan_inbox():
     """Scan inbox directory for new ZIPs and ingest them."""
