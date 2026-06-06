@@ -34,7 +34,7 @@ logger = logging.getLogger("tinderbox.qa.generate")
 
 GENERATION_MODEL = "claude-haiku-4-5"
 
-PROMPT_TEMPLATE = """You are generating retrieval-eval queries for a personal claude.ai conversation archive owned by Lucky.
+PROMPT_TEMPLATE = """You are generating retrieval-eval queries for a personal claude.ai conversation archive.
 
 Below is one conversation from the archive. Your job: produce exactly THREE search queries that should retrieve THIS conversation when run against the archive's hybrid search (semantic + full-text).
 

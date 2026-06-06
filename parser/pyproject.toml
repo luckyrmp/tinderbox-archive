@@ -1,7 +1,7 @@
 [project]
-name = "tinderbox-archive"
+name = "claude-tinderbox"
 version = "0.1.0"
-description = "Personal claude.ai conversation archive — ingest, search, enrichment, and MCP server"
+description = "Personal claude.ai conversation archive — ingest, embed, search, and MCP server"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.12"

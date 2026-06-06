@@ -45,7 +45,7 @@ SEARCH_INPUT_SCHEMA = {
     "properties": {
         "query": {
             "type": "string",
-            "description": "Natural-language or keyword query against Lucky's claude.ai archive."
+            "description": "Natural-language or keyword query against the conversation archive."
         },
         "limit": {
             "type": "integer",
@@ -319,11 +319,10 @@ def main():
     server.register(Tool(
         name="tinderbox_search",
         description=(
-            "Search Lucky's personal claude.ai conversation archive (10,000+ messages, "
-            "672+ conversations) using hybrid semantic + full-text retrieval. "
-            "Returns top results with conversation title, score, and snippet. "
-            "Use this when you need context from prior Claude sessions, past decisions, "
-            "or specific conversations Lucky has had with any Claude (Reef, Wake, Song, Kuro, etc.)."
+            "Search your personal claude.ai conversation archive using hybrid semantic "
+            "+ full-text retrieval. Returns top results with conversation title, score, "
+            "and snippet. Use this when you need context from prior Claude sessions, "
+            "past decisions, or specific conversations."
         ),
         input_schema=SEARCH_INPUT_SCHEMA,
         handler=make_search_handler(config),
