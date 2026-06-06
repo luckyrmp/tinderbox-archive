@@ -115,6 +115,16 @@ class MCPServer:
         if name not in self.tools:
             return self._error(request_id, -32602, f"unknown tool: {name}")
         tool = self.tools[name]
+
+        # Validate required parameters against the tool's input schema.
+        required = tool.input_schema.get("required") or []
+        missing = [k for k in required if k not in args or args[k] is None]
+        if missing:
+            return self._error(
+                request_id, -32602,
+                f"missing required parameter(s): {', '.join(missing)}",
+            )
+
         try:
             content = tool.handler(args)
         except Exception as e:

@@ -44,7 +44,7 @@ logger = logging.getLogger("tinderbox.embed.worker")
 # Batch sizes — we tune toward Supabase REST limits and Ollama warm-up.
 SOURCE_PAGE_SIZE = 50         # rows per DB page when iterating sources
 OLLAMA_BATCH_SIZE = 32        # texts per Ollama /api/embed call
-DB_UPSERT_BATCH_SIZE = 128    # embedding rows per Supabase upsert call
+DB_UPSERT_BATCH_SIZE = 32     # embedding rows per Supabase upsert call (1024-dim vectors are large)
 
 
 @dataclass
@@ -111,6 +111,38 @@ def _existing_chunk_indices(source_type: str, source_id: str,
         .execute()
     )
     return {r["chunk_index"] for r in (res.data or [])}
+
+
+def _prefetch_embedded_chunks(source_type: str,
+                              embedding_model: str) -> set[tuple[str, int]]:
+    """Bulk-fetch all (source_id, chunk_index) already embedded for this type+model.
+
+    Replaces the N+1 pattern of calling _existing_chunk_indices per source row.
+    Fetches in pages of 10k to handle large archives.
+    """
+    result: set[tuple[str, int]] = set()
+    # Supabase PostgREST caps responses at 1000 rows by default. Use 1000
+    # as the page size and stop only when we get an empty page.
+    page_size = 1_000
+    offset = 0
+    while True:
+        res = (
+            db.table("embeddings")
+            .select("source_id,chunk_index")
+            .eq("source_type", source_type)
+            .eq("embedding_model", embedding_model)
+            .range(offset, offset + page_size - 1)
+            .execute()
+        )
+        rows = res.data or []
+        for r in rows:
+            result.add((r["source_id"], r["chunk_index"]))
+        if not rows:
+            break
+        offset += page_size
+    logger.info("prefetch_embedded_chunks: %d (source_type=%s model=%s)",
+                len(result), source_type, embedding_model)
+    return result
 
 
 def _iter_message_sources(config: Config) -> "Iterator[dict]":
@@ -209,15 +241,21 @@ def embed_messages(config: Config, http: httpx.Client | None = None,
     """Embed every message that doesn't yet have an embedding for this model.
 
     `limit` caps the number of source rows processed (handy for smoke tests).
+    Uses a single bulk prefetch of already-embedded (source_id, chunk_index)
+    pairs instead of per-row DB calls to avoid connection exhaustion on large
+    archives.
     """
     counters = EmbedCounters()
     own_http = http is None
     if http is None:
         http = httpx.Client(timeout=120.0)
 
-    pending: list[tuple[str, str, Chunk]] = []  # (source_type, source_id, chunk)
+    pending: list[tuple[str, str, Chunk]] = []
 
     try:
+        # One bulk fetch instead of N+1 per-message queries.
+        already_embedded = _prefetch_embedded_chunks("message", config.embedding_model)
+
         for row in _iter_message_sources(config):
             if limit is not None and counters.sources_seen >= limit:
                 break
@@ -227,11 +265,11 @@ def embed_messages(config: Config, http: httpx.Client | None = None,
                 counters.sources_skipped_empty += 1
                 continue
 
-            existing = _existing_chunk_indices(
-                "message", row["id"], config.embedding_model
-            )
             chunks = chunk_message(content)
-            new_chunks = [c for c in chunks if c.chunk_index not in existing]
+            new_chunks = [
+                c for c in chunks
+                if (row["id"], c.chunk_index) not in already_embedded
+            ]
             if not new_chunks:
                 counters.sources_skipped_already_embedded += 1
                 continue
@@ -242,9 +280,12 @@ def embed_messages(config: Config, http: httpx.Client | None = None,
             # Flush periodically.
             if len(pending) >= OLLAMA_BATCH_SIZE * 4:
                 _flush_pending(pending, config, http, counters)
+                # Update already_embedded so re-runs within the same call are idempotent.
+                for _, src_id, chunk in pending:
+                    already_embedded.add((src_id, chunk.chunk_index))
                 pending.clear()
 
-            if counters.sources_seen % 200 == 0:
+            if counters.sources_seen % 500 == 0:
                 logger.info(
                     "messages: seen=%d embedded_chunks=%d empty=%d already=%d",
                     counters.sources_seen, counters.chunks_embedded,
@@ -272,6 +313,8 @@ def embed_artifacts(config: Config, http: httpx.Client | None = None,
     pending: list[tuple[str, str, Chunk]] = []
 
     try:
+        already_embedded = _prefetch_embedded_chunks("artifact", config.embedding_model)
+
         for row in _iter_artifact_sources(config):
             if limit is not None and counters.sources_seen >= limit:
                 break
@@ -282,11 +325,11 @@ def embed_artifacts(config: Config, http: httpx.Client | None = None,
                 counters.sources_skipped_empty += 1
                 continue
 
-            existing = _existing_chunk_indices(
-                "artifact", row["id"], config.embedding_model
-            )
             chunks = chunk_artifact(title, content)
-            new_chunks = [c for c in chunks if c.chunk_index not in existing]
+            new_chunks = [
+                c for c in chunks
+                if (row["id"], c.chunk_index) not in already_embedded
+            ]
             if not new_chunks:
                 counters.sources_skipped_already_embedded += 1
                 continue
@@ -296,6 +339,8 @@ def embed_artifacts(config: Config, http: httpx.Client | None = None,
 
             if len(pending) >= OLLAMA_BATCH_SIZE * 4:
                 _flush_pending(pending, config, http, counters)
+                for _, src_id, chunk in pending:
+                    already_embedded.add((src_id, chunk.chunk_index))
                 pending.clear()
 
             if counters.sources_seen % 50 == 0:
