@@ -20,6 +20,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 export PYTHONPATH="$REPO_ROOT"
-export TINDERBOX_ENV_FILE="${TINDERBOX_ENV_FILE:-$HOME/.secrets/tinderbox.env}"
+export TINDERBOX_ENV_FILE="${TINDERBOX_ENV_FILE:-$HOME/.secrets/shared.env}"
 
-exec python3 -m tinderbox.mcp.server
+exec "$REPO_ROOT/venv/bin/python3.14" -m tinderbox.mcp.server
