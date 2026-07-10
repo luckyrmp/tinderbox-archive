@@ -179,19 +179,18 @@ def record_alert_sent() -> None:
 
 
 def post_to_agent_comms(message: str) -> bool:
-    """Best-effort post. Returns True on success, False otherwise."""
+    """Best-effort post to Reef inbox. Returns True on success, False otherwise."""
     try:
-        # Use Supabase's agent_comms table directly. We're in tinderbox schema
-        # by default, switch to public for this one query.
+        # Post to public.agent_messages (Reef's inbox table).
         client = db.get_client()
-        client.schema("public").table("agent_comms").insert({
+        client.schema("public").table("agent_messages").insert({
             "from_agent": "tinderbox",
             "to_agent": "reef",
-            "message_type": "alert",
-            "content": message,
-            "metadata": {"source": "tinderbox.staleness"},
+            "subject": "staleness alert",
+            "body": message,
+            "status": "pending",
         }).execute()
         return True
     except Exception as e:
-        logger.warning("agent_comms post failed (non-fatal): %s", e)
+        logger.warning("agent_messages post failed (non-fatal): %s", e)
         return False
