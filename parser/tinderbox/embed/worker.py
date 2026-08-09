@@ -77,23 +77,46 @@ def _embed_batch_with_fallback(batch: list[tuple[str, str, "Chunk"]],
     except OllamaEmbeddingError as e:
         logger.warning("Batch failed (%s); falling back to one-at-a-time", str(e)[:120])
 
-    # One-at-a-time fallback.
+    # One-at-a-time fallback. For "context length exceeded" specifically,
+    # the char-based chunking heuristic (chunking.py) underestimates token
+    # density for dense content (JSON, terminal output, code) — halve the
+    # text and retry rather than give up, since even a truncated embedding
+    # beats none. Any other error, or exhausting the shrink budget, fails
+    # loud (ERROR), never silently.
     out: list[list[float] | None] = []
     for i, text in enumerate(texts):
-        try:
-            v = with_retry(
-                lambda t=text: embed_batch([t], config, client=http),
-                op_name=f"ollama single fallback i={i}",
-                max_attempts=2,
-            )
-            counters.embedding_calls += 1
-            out.append(v[0])
-        except OllamaEmbeddingError as e:
+        src_type, src_id, chunk = batch[i]
+        candidate = text
+        vec: list[float] | None = None
+        last_err: OllamaEmbeddingError | None = None
+        for shrink_attempt in range(6):  # 100% -> 50% -> ... -> ~3%
+            try:
+                v = with_retry(
+                    lambda t=candidate: embed_batch([t], config, client=http),
+                    op_name=f"ollama single fallback i={i}",
+                    max_attempts=2,
+                )
+                counters.embedding_calls += 1
+                vec = v[0]
+                if shrink_attempt > 0:
+                    logger.warning(
+                        "Embedded %s/%s chunk=%d after truncating to %d chars "
+                        "(context-length fallback, original %d chars)",
+                        src_type, src_id, chunk.chunk_index, len(candidate), len(text),
+                    )
+                break
+            except OllamaEmbeddingError as e:
+                last_err = e
+                if "context length" not in str(e).lower() or len(candidate) <= 100:
+                    break
+                candidate = candidate[: len(candidate) // 2]
+        if vec is not None:
+            out.append(vec)
+        else:
             counters.chunks_failed += 1
-            src_type, src_id, chunk = batch[i]
-            logger.warning(
-                "Single-row embed failed (%s/%s chunk=%d): %s",
-                src_type, src_id, chunk.chunk_index, str(e)[:120],
+            logger.error(
+                "Single-row embed permanently failed (%s/%s chunk=%d, len=%d): %s",
+                src_type, src_id, chunk.chunk_index, len(text), str(last_err)[:120],
             )
             out.append(None)
     return out

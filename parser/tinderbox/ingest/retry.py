@@ -31,6 +31,7 @@ TRANSIENT_PHRASES = [
     "Bad Gateway",
     "Service Unavailable",
     "Gateway Timeout",
+    "statement timeout",
 ]
 
 # Postgres SQLSTATE codes that mean "do not retry" (fail-fast).
