@@ -28,3 +28,20 @@ def zip_already_ingested(sha256: str) -> str | None:
     if result.data:
         return result.data[0]["id"]
     return None
+
+
+def release_failed_sha(sha256: str) -> int:
+    """export_sha256 is UNIQUE, so a failed/orphaned run would block any retry of the
+    same ZIP. Keep those rows for audit but suffix their sha so a new run can insert."""
+    result = (
+        db.table("ingest_runs")
+        .select("id")
+        .eq("export_sha256", sha256)
+        .eq("status", "failed")
+        .execute()
+    )
+    for row in (result.data or []):
+        db.table("ingest_runs").update(
+            {"export_sha256": f"{sha256}:failed:{row['id'][:8]}"}
+        ).eq("id", row["id"]).execute()
+    return len(result.data or [])

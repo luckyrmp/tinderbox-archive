@@ -11,7 +11,7 @@ from pathlib import Path
 from tinderbox import db
 from tinderbox.config import Config
 from tinderbox.ingest.errors import IngestError
-from tinderbox.ingest.idempotency import compute_zip_sha256, zip_already_ingested
+from tinderbox.ingest.idempotency import compute_zip_sha256, zip_already_ingested, release_failed_sha
 from tinderbox.ingest.upsert import (
     upsert_conversation, insert_message, insert_artifact, insert_attachment,
     get_conversation_id,
@@ -54,6 +54,11 @@ def run(zip_path: str, config: Config, canary_override: bool = False,
 
     # Step 3: orphan sweep — mark stale 'running' rows as failed
     _sweep_orphans(config)
+
+    # Step 3b: free the unique sha from any earlier failed attempt of this same ZIP
+    released = release_failed_sha(sha256)
+    if released:
+        logger.info("Released sha from %d earlier failed run(s) of this ZIP", released)
 
     # Step 4: create ingest_runs row
     now_iso = datetime.now(timezone.utc).isoformat()
