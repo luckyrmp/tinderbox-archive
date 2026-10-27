@@ -76,3 +76,13 @@ false negative for this one row.
   - "CubeBot" → top 5 hits all from "LuckAiBot," directly on-topic.
   - "song-autonomous workspace" → rank #2 is today's "Graph engineering fundamentals"
     conversation, confirming freshest-data reaches embedding/retrieval end-to-end.
+
+## 2026-10-26 — full all-time Claude export (run 0e4b1e07)
+
+- Export: `exports/conversations-000-2026-10-27.zip` (sha256 a9d54826…), all-time export by Reef.
+- First attempt (run f8381724) failed at startup and wrote nothing; retry 0e4b1e07 completed.
+- Ingest: 109 new/updated conversations of 920 seen, 2,359 messages, 10 attachments, 0 errors. Canary did not trip.
+- Embed: 2,264 new message chunks; a few transient Supabase statement timeouts recovered on retry. `ALL DONE exit=0` at 21:43 PT.
+- Archive now: 920 conversations (all active), 14,779 messages, 14,988 embeddings; newest conversation Oct 26, 2026 (7:29 PM PT).
+- Minor: harmless logging TypeError in `ingest/runner.py:175` ("Invalidated %d cached search entries", n is None). Cosmetic, not fixed.
+- Next: weekly export + import routine.
