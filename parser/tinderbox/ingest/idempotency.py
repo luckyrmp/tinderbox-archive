@@ -16,11 +16,12 @@ def compute_zip_sha256(zip_path: str | Path) -> str:
 
 
 def zip_already_ingested(sha256: str) -> str | None:
-    """Check if this ZIP has already been ingested. Returns run_id if so, None otherwise."""
+    """Check if this ZIP has already been ingested (non-failed run). Returns run_id if so, None otherwise."""
     result = (
         db.table("ingest_runs")
         .select("id")
         .eq("export_sha256", sha256)
+        .neq("status", "failed")  # failed/orphaned runs must not block a retry or override-canary
         .limit(1)
         .execute()
     )
