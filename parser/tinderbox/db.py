@@ -17,7 +17,11 @@ _config: Config | None = None
 def init(config: Config) -> Client:
     global _client, _config
     _config = config
-    _client = create_client(config.supabase_url, config.supabase_service_key)
+    if config.db_dsn:
+        from tinderbox.db_readonly import ReadOnlyClient
+        _client = ReadOnlyClient(config.db_dsn)
+    else:
+        _client = create_client(config.supabase_url, config.supabase_service_key)
     return _client
 
 

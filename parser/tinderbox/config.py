@@ -12,6 +12,9 @@ class Config:
     supabase_url: str
     supabase_service_key: str
     schema: str = "tinderbox"
+    # Optional: direct read-only Postgres DSN (remote MCP bridge). When set,
+    # db.py uses a psycopg2 read-only client instead of supabase-py.
+    db_dsn: str | None = None
 
     inbox_dir: Path = field(default_factory=lambda: Path.home() / "tinderbox" / "inbox")
     work_dir: Path = field(default_factory=lambda: Path.home() / "tinderbox" / "work")
@@ -38,7 +41,11 @@ def load_config() -> Config:
 
     url = os.environ.get("SUPABASE_URL")
     key = os.environ.get("SUPABASE_SERVICE_KEY")
-    if not url or not key:
+    dsn = os.environ.get("TINDERBOX_DB_DSN")
+    if dsn and not (url and key):
+        url = url or "postgres-direct"
+        key = key or ""
+    if not url or (not key and not dsn):
         raise RuntimeError(
             f"SUPABASE_URL and SUPABASE_SERVICE_KEY must be set. "
             f"Checked env file: {env_file}"
@@ -48,6 +55,7 @@ def load_config() -> Config:
         supabase_url=url,
         supabase_service_key=key,
         schema=os.environ.get("TINDERBOX_SCHEMA", "tinderbox"),
+        db_dsn=dsn or None,
         inbox_dir=Path(os.environ.get("TINDERBOX_INBOX", str(Path.home() / "tinderbox" / "inbox"))),
         work_dir=Path(os.environ.get("TINDERBOX_WORK", str(Path.home() / "tinderbox" / "work"))),
         archive_dir=Path(os.environ.get("TINDERBOX_ARCHIVE", str(Path.home() / "tinderbox" / "archive"))),
