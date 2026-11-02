@@ -32,6 +32,11 @@ TRANSIENT_PHRASES = [
     "Service Unavailable",
     "Gateway Timeout",
     "statement timeout",
+    # HTTP/2 GOAWAY on a long-lived pooled connection (server stream cap);
+    # httpx reconnects on the next request.
+    "ConnectionTerminated",
+    "RemoteProtocolError",
+    "Server disconnected",
 ]
 
 # Postgres SQLSTATE codes that mean "do not retry" (fail-fast).

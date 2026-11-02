@@ -28,3 +28,9 @@ def test_table_reuses_schema_client(monkeypatch):
     for _ in range(50):
         assert db.table("messages") == "messages"
     assert fake.calls == 1
+
+
+def test_http2_goaway_is_transient():
+    from tinderbox.ingest.retry import is_transient
+    exc = Exception("<ConnectionTerminated error_code:0, last_stream_id:19999, additional_data:None>")
+    assert is_transient(exc)
