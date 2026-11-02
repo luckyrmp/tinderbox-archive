@@ -94,3 +94,12 @@ false negative for this one row.
 - Runs 9b5f40df and 8fbbf18a (via one-shot LaunchAgent): after ~2 min of parsing, every Supabase call failed with `httpx.ConnectError [Errno 8] nodename nor servname provided` for the whole run (920 conversation errors, exit=1). The Supabase host resolves fine from the same Mac immediately before/after. Both left `running`, marked `failed`. Embed not run.
 - DB unchanged: 920 conversations, 14,779 messages.
 - Next: investigate the in-process DNS failure (likely after the long parse — connection pool/resolver under load), then re-run ingest. Not overridden.
+
+## 2026-11-01 (retry) — weekly all-time Claude export (run d6d54b3c)
+
+- Export: sha256 373f177f…, 927 conversations / 15,568 messages; ZIP archived to `archive/373f177f….zip`.
+- **Root cause of the Errno 8 failures:** `db.table()` called supabase-py `.schema()` on every request, which builds a new PostgREST client + httpx session each time and never closes it. Sockets leaked until the process hit launchd's 256-fd soft limit; macOS getaddrinfo then fails with `[Errno 8] nodename nor servname provided`. (Terminal shells have a huge fd limit, so it never showed there.) Fix `e770466`: cache one schema client. Verified fds flat at ~63 for the whole run.
+- Side effect of connection reuse: Supabase sends HTTP/2 GOAWAY every ~20k streams (`ConnectionTerminated`), which retry didn't classify as transient → 3 messages skipped. Fix `62d9c7a`: treat ConnectionTerminated/RemoteProtocolError as transient. `scripts/recover_conv.py` on the 3 conversations found nothing missing; DB message count equals export (15,568).
+- Ingest: status `partial` (only those 3 errors), 7 new + 920 updated conversations, 789 new messages, 1 attachment. Embed: 748 new message chunks, `EMBED exit=0`. Ran via one-shot LaunchAgent (removed after).
+- **Incident (mine):** running `pytest tests` executed the live integration test `test_modified_zip.py`, which calls `ingest_run(canary_override=True)` against prod; its sweep tombstoned all 920 existing conversations (deleted_upstream_at 2026-11-02T04:12:57Z). No rows deleted. Reverted exactly that batch (all 920 were present in this export). Live tests now opt-in via `tests/conftest.py` (`TINDERBOX_LIVE_TESTS=1`).
+- Archive now: 927 conversations (all active), 15,568 messages; newest conversation "3D print plan search", updated Nov 1, 2026 6:12 PM PT.
