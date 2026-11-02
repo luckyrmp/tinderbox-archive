@@ -86,3 +86,11 @@ false negative for this one row.
 - Archive now: 920 conversations (all active), 14,779 messages, 14,988 embeddings; newest conversation Oct 26, 2026 (7:29 PM PT).
 - Minor: harmless logging TypeError in `ingest/runner.py:175` ("Invalidated %d cached search entries", n is None). Cosmetic, not fixed.
 - Next: weekly export + import routine.
+
+## 2026-11-01 — weekly all-time Claude export (FAILED, not ingested)
+
+- Export: `exports/conversations-000-20261101.zip` (sha256 373f177f…), conversations.json at root (~200 MB, 920+ conversations), requested 6:10 PM PT.
+- Run f567d2b1: launched via nohup from an agent shell; process was killed when the shell session ended (no exit line). Left `running`; marked `failed` by hand so the sha could be released.
+- Runs 9b5f40df and 8fbbf18a (via one-shot LaunchAgent): after ~2 min of parsing, every Supabase call failed with `httpx.ConnectError [Errno 8] nodename nor servname provided` for the whole run (920 conversation errors, exit=1). The Supabase host resolves fine from the same Mac immediately before/after. Both left `running`, marked `failed`. Embed not run.
+- DB unchanged: 920 conversations, 14,779 messages.
+- Next: investigate the in-process DNS failure (likely after the long parse — connection pool/resolver under load), then re-run ingest. Not overridden.
