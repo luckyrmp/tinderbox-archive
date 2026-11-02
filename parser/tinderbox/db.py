@@ -12,11 +12,13 @@ from tinderbox.config import Config
 
 _client: Client | None = None
 _config: Config | None = None
+_schema_client = None  # cached: client.schema() builds a NEW httpx session per call
 
 
 def init(config: Config) -> Client:
-    global _client, _config
+    global _client, _config, _schema_client
     _config = config
+    _schema_client = None
     if config.db_dsn:
         from tinderbox.db_readonly import ReadOnlyClient
         _client = ReadOnlyClient(config.db_dsn)
@@ -39,7 +41,15 @@ def get_config() -> Config:
 
 def table(name: str):
     """Shortcut: client.schema(tinderbox).table(name) for every call."""
-    return get_client().schema(get_config().schema).table(name)
+    global _schema_client
+    # supabase-py's .schema() constructs a fresh SyncPostgrestClient (and httpx
+    # session) on every call and never closes it. Over a full ingest this leaks
+    # sockets until the process hits its fd limit (256 under launchd), after
+    # which getaddrinfo fails with "[Errno 8] nodename nor servname provided".
+    # Build the schema client once and reuse its connection pool.
+    if _schema_client is None:
+        _schema_client = get_client().schema(get_config().schema)
+    return _schema_client.table(name)
 
 
 def execute_sql(query: str, config: Config | None = None) -> list[dict]:
